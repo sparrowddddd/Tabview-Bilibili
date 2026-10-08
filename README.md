@@ -26,7 +26,7 @@
 # 支持
 
 <p align="center">
-  <img src="https://github.com/sparrowddddd/Tabview-Bilibili/tree/main/images/赞赏.png">
+  <img src="./images/赞赏.png">
 </p>
 
 ## 许可
