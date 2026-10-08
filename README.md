@@ -26,7 +26,7 @@
 # 支持
 
 <p align="center">
-  <img src="./images/赞赏.png">
+  <img src="./images/赞赏.png" width=%25>
 </p>
 
 ## 许可
