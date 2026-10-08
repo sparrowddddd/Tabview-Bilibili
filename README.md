@@ -1,6 +1,6 @@
 # Tabview Bilibili
 
-需搭配[Bilibili-Evolved](https://github.com/the1812/Bilibili-Evolved)食用
+需搭配[Bilibili-Evolved](https://github.com/the1812/Bilibili-Evolved)食用：[Bilibili-Evolved播放页设置](./images/Bilibili-Evolved视频页设置.png)
 
 把 B 站视频页的**简介、评论、推荐视频**收进右侧标签页，无需下划页面，专注看视频。思路来自 Tabview YouTube 的 B 站版。
 
