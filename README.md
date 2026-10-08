@@ -9,7 +9,6 @@
   <img src="./images/效果4.png" witch="24%">
   <img src="./images/效果5.png" witch="24%">
 </p>
-![](./images/效果2.png)![](./images/效果3.png)![](./images/效果4.png)![](./images/效果5.png)
 
 把 B 站视频页的**简介、评论、推荐视频**收进右侧标签页，无需下划页面，专注看视频。思路来自 Tabview YouTube 的 B 站版。
 
