@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tabview Bilibili（哔哩哔哩右侧标签页）
 // @namespace    https://www.bilibili.com/
-// @version      4.2.2
+// @version      4.2.4
 // @description  把视频简介、评论、推荐视频收进右侧标签页，无需下翻页面，专注看视频（Tabview YouTube 思路的 B 站版）
 // @author       WorkBuddy
 // @license      MIT
@@ -33,7 +33,36 @@
  *      浮层点遮罩、点「关闭」、按 Esc 都能关；停用时整个浮层从文档移除
  *      （不会残留遮罩挡住页面）。
  *
- * v4.2.2 性能优化（本次）：标签页出现更快 + 常驻开销更低 ——
+ * v4.2.4 修复（本次）：部分视频打开后播放器"二次刷新加载" + 加载期卡顿 ——
+ *   · 症状：某些视频打开后正常播 1~2 秒即黑屏，随后播放器空壳（"你感兴趣的视频
+ *     都在B站"）停 6~7 秒才重新起播；关掉脚本即消失。有的表现为加载期明显卡顿。
+ *   · 取证：录像拆帧 + 整页截图证实"页面其余部分完好、只有播放器被拆"→ 不是
+ *     整个 App 重挂，是 B 站播放器自身超时重载。脚本从不移除播放器节点，
+ *     嫌疑落在"加载窗口内脚本把主线程占满"：实测（默认标签=评论、1560×910）
+ *     脚本使 22s 内长任务多出 ~4.3s、单次最长 2447ms。
+ *   · 根因：tweakOneCard 对每张评论卡做「DOM 写入 + getBoundingClientRect」，
+ *     N 张卡 = N 次全页强制回流，单次可达 2.4s；更糟的是这些发生在播放器
+ *     初始化/首帧缓冲期间 → 媒体被饿死 → B 站看门狗重载播放器。
+ *   · 修法：① 冷窗口保护 mediaCold()：首次 playing 后 2.5s 内（或页面 8s 内）
+ *     不做昂贵遍历（保留 dirty 标记，窗口结束自动重跑）；② 卡片批处理
+ *     runActBatch()：每片 8 张卡 + requestIdleCallback 续跑，把 N 次回流摊到
+ *     多帧，杜绝单次长任务；③ 1s tick 去掉重复的 ensurePodToggle()
+ *     （layout() 末尾已调用）。
+ *   · 另附诊断模式（平时零开销）：网址后加 ?btvdiag=1 打开视频，脚本会记录媒体
+ *     事件/长任务/布局/视频节点销毁时间线，命中"播放器被销毁 / 进度回退"时
+ *     自动导出 btv-diag-*.txt（同时 console + 剪贴板），便于用户侧取证复现。
+ *
+ * v4.2.3 修复：多P（选集）视频页面渲染被破坏 ——
+ *   · 症状：多P视频页上选集列表在、但推荐视频封面全空、UP 头像/关注按钮不显示，
+ *     页面大量图片组件挂掉（全页 img 从 30 张掉到 5 张）。
+ *   · 根因：v4.1 的合集「收起」按钮被 insertBefore 进 .video-pod__header（Vue
+ *     管理区）。合集页恰好不炸，多P页选集列表异步 patch 时撞上我们的节点，
+ *     Vue 抛 HierarchyRequestError，后续 b-img 系组件（封面/头像）全挂。
+ *   · 修法：按钮改为视觉传送——DOM 挂 body，fixed 定位摆到标题行「（1/4）」
+ *     右侧；对 .video-pod 只打 btv-pod-collapsed class（零 DOM 写入）。
+ *     已用二分实验证实：仅移除按钮插入，多P页即完全恢复。
+ *
+ * v4.2.2 性能优化：标签页出现更快 + 常驻开销更低 ——
  *   · 启动地板 3500ms → 1000ms、轮询 250ms → 100ms：siteBooted() 本就判播放器
  *     就绪，过早误启由 1s tick 自愈 + 启用后 600ms 补测纠正。效果上标签 UI
  *     从"最快 3.5s 出现"提前到 ~1.1s。
@@ -842,6 +871,30 @@ html.btv-on #commentapp.btv-a {
 html.btv-on .video-pod.btv-pod-collapsed .video-pod__body {
   display: none !important;
 }
+
+/* ========== v4.2.3 选集/合集「收起|展开」按钮：视觉传送，DOM 不进 Vue 树 ==========
+ * v4.1~4.2.2 把按钮 insertBefore 进 .video-pod__header（Vue 管理区），在多P视频上
+ * 破坏 Vue patch（HierarchyRequestError → 选集/推荐封面、UP 头像全部渲染失败）。
+ * 改为：按钮挂在 body（我们地盘），fixed 定位传送到标题行「（1/4）」右侧。 */
+#btv-pod-toggle {
+  position: fixed;
+  z-index: 7;
+  height: 24px;
+  line-height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text3, #9499a0);
+  background: var(--graph_bg_thin, #f1f2f3);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#btv-pod-toggle:hover {
+  color: var(--text1, #18191c);
+  background: var(--graph_bg_thick, #e3e5e7);
+}
 html.btv-on #btv-pod-toggle:hover {
   color: var(--text1, #18191c);
   background: var(--graph_bg_thick, #e3e5e7);
@@ -862,6 +915,88 @@ html.btv-on #btv-pod-toggle:hover {
   let currentTab = 'videos';
   let layoutTimer = 0;
   let enabled = false;
+
+  /* ========== v4.2.4 加载窗口保护 ==========
+   * 现象：部分视频打开后播放器被 B 站拆掉重建（黑屏 → 空壳 → 重新加载，约 6-7s），
+   * 关掉脚本即消失。取证结论：不是整个 App 重挂（页面其余部分完好），是播放器
+   * 超时重载；脚本自身从不移除播放器节点。真凶是"加载窗口内我们自己把主线程占满"：
+   * 实测（默认标签=评论、1560x910）脚本使 22s 内长任务多出 ~4.3s、单次最长 2447ms，
+   * 成因是 tweakOneCard 对每张评论卡做「DOM 写入 + getBoundingClientRect」→
+   * N 张卡 = N 次全页强制回流。媒体初始化被饿死 → B 站看门狗重载播放器。
+   *
+   * 对策：① 冷窗口（播放器初始化/首帧缓冲）内不做昂贵遍历；② 卡片批处理，
+   * 把 N 次回流摊到多帧/空闲片，杜绝单次长任务。
+   */
+  let pageAt = Date.now();
+  let firstPlayingAt = 0;
+  function mediaCold() {
+    // 起播稳定 2.5s 后解禁；最长 8s 兜底（视频一直起不来也不能永久冻结评论处理）
+    if (firstPlayingAt && Date.now() - firstPlayingAt > 2500) return false;
+    if (Date.now() - pageAt > 8000) return false;
+    return true;
+  }
+
+  /* ========== v4.2.4 诊断日志（仅 URL 带 ?btvdiag=1 时启用，平时零开销）==========
+   * 自动记录媒体事件/长任务/布局写入/视频节点销毁，命中异常即导出 txt 报告
+   * （同时 console + 剪贴板），用于用户侧复现时取证。
+   */
+  const DIAG = /[?&]btvdiag/.test(location.search);
+  const diagLog = [];
+  let diagSaved = false;
+  let diagLastV = null, diagLastCt = 0;
+  function diagPush(kind, extra) {
+    if (!DIAG) return;
+    try {
+      diagLog.push((Date.now() - pageAt) + 'ms ' + kind + (extra ? ' ' + extra : ''));
+      if (diagLog.length > 3000) diagLog.shift();
+    } catch (e) { /* ignore */ }
+  }
+  function diagSave(reason) {
+    if (!DIAG || diagSaved) return;
+    diagSaved = true;
+    try {
+      const text = [
+        'Tabview Bilibili 诊断报告',
+        '原因: ' + reason,
+        '时间: ' + new Date().toString(),
+        'URL: ' + location.href,
+        '视口: ' + window.innerWidth + 'x' + window.innerHeight + ' dpr=' + window.devicePixelRatio,
+        'UA: ' + navigator.userAgent,
+        '------------------------------------'
+      ].join('\n') + '\n' + diagLog.join('\n');
+      try { console.log(text); } catch (e) { /* ignore */ }
+      try { if (navigator.clipboard) navigator.clipboard.writeText(text); } catch (e) { /* ignore */ }
+      const a = document.createElement('a');
+      a.href = URL_invokeBlob(text);
+      a.download = 'btv-diag-' + Date.now() + '.txt';
+      a.click();
+    } catch (e) { /* ignore */ }
+  }
+  function URL_invokeBlob(text) {
+    try { return window.URL.createObjectURL(new Blob([text], { type: 'text/plain' })); }
+    catch (e) { return 'data:text/plain;charset=utf-8,' + encodeURIComponent(text); }
+  }
+  function diagArm() {
+    if (!DIAG) return;
+    try {
+      ['loadstart', 'emptied', 'abort', 'error', 'waiting', 'stalled', 'play', 'playing',
+        'pause', 'seeking', 'seeked', 'loadeddata'].forEach(function (n) {
+        document.addEventListener(n, function (ev) {
+          if (ev.target && ev.target.tagName === 'VIDEO') {
+            diagPush('media:' + n, 'ct=' + (Math.round(ev.target.currentTime * 10) / 10) + ' rs=' + ev.target.readyState);
+          }
+        }, true);
+      });
+      try {
+        new PerformanceObserver(function (l) {
+          l.getEntries().forEach(function (e) {
+            if (e.entryType === 'longtask' && e.duration > 60) diagPush('longtask', Math.round(e.duration) + 'ms');
+          });
+        }).observe({ entryTypes: ['longtask'] });
+      } catch (e) { /* ignore */ }
+      diagPush('arm', 'viewport=' + window.innerWidth + 'x' + window.innerHeight);
+    } catch (e) { /* ignore */ }
+  }
 
   function injectCSS() {
     if (document.getElementById('btv-style')) return;
@@ -1264,6 +1399,9 @@ html.btv-on #btv-pod-toggle:hover {
       const rc = $('.rcmd-tab');
       if (rc) rc.classList.add('btv-a');
     }
+    // v4.2.3：切 tab / resize 都会走 layout —— 顺手刷新选集按钮位置/可见性，
+    // 不等 1s tick（否则切走「视频」tab 后按钮最多滞留原地 1 秒）。
+    try { ensurePodToggle(); } catch (e) { /* ignore */ }
   }
 
   // UP 主信息搬到左栏信息带左侧，标题/三连栏右移让位
@@ -2098,6 +2236,9 @@ html.btv-on #btv-pod-toggle:hover {
       // #commentapp 被 Vue 整棵换掉时 observer 挂在旧实例上收不到事件 → 直接置脏。
       if (app !== lastCmtApp) { lastCmtApp = app; cmtDirty = true; }
       if (!cmtDirty && (cmtTick % 30 !== 0)) return;
+      // v4.2.4：播放器初始化/首帧缓冲期间不做昂贵遍历（保留 dirty，冷窗口结束后
+      // 由下一次 tick 自动重跑）——避免和媒体初始化抢主线程导致播放器超时重载。
+      if (mediaCold()) { diagPush('cmt:defer-cold'); return; }
       const found = deepCollect(app, 20000);
       cmtDirty = false;                  // 消费掉；之后我们/ B 站的改动会经 observer 再置位
       if (enabled && found.boxes.length) {
@@ -2128,12 +2269,33 @@ html.btv-on #btv-pod-toggle:hover {
       const ar = app.getBoundingClientRect();
       if (!(ar.width > 1 && ar.height > 1)) return;
       if (!found.acts.length) return;
-      found.acts.forEach(act => tweakOneCard(act, found.infos));
+      // v4.2.4：卡片批处理 —— 每片只处理 ACT_SLICE 张卡再让出主线程。
+      // 原来是 forEach 全量：N 张卡 = N 次「写入 + 测量」= N 次全页强制回流，
+      // 实测单次长任务可达 2.4s（评论多时更久），媒体播放会被饿死。
+      diagPush('cmt:acts', 'n=' + found.acts.length);
+      runActBatch(found.acts, found.infos, 0);
     } catch (e) { /* 评论组件结构调整时静默跳过，不影响主流程 */ }
+  }
+
+  // 分批处理评论卡片：先处理一片，剩余交给空闲回调继续（超时兜底 600ms）
+  const ACT_SLICE = 8;
+  function runActBatch(acts, infos, cursor) {
+    if (cursor >= acts.length) return;
+    if (mediaCold()) return;                      // 播放器还没稳，先不做
+    const slice = acts.slice(cursor, cursor + ACT_SLICE);
+    slice.forEach(act => { try { tweakOneCard(act, infos); } catch (e) { /* ignore */ } });
+    const next = cursor + ACT_SLICE;
+    if (next >= acts.length) return;
+    if (window.requestIdleCallback) {
+      requestIdleCallback(function () { runActBatch(acts, infos, next); }, { timeout: 600 });
+    } else {
+      setTimeout(function () { runActBatch(acts, infos, next); }, 50);
+    }
   }
 
   // 单张评论卡片：时间搬到用户名之后 + 操作按钮靠右（幂等，可每秒重复调用）
   function tweakOneCard(act, infos) {
+    if (!act || !act.isConnected) return;         // v4.2.4：批处理跨帧，节点可能已被 Vue 换掉
     const asr = act.shadowRoot;
     // 自检失败过的卡片平时不再碰；每 30 tick 给它一次"复活"复检的机会 ——
     // 组件重建后失败原因可能已消失（v3.9：也用于自愈历史遗留的误标 skip）。
@@ -2273,59 +2435,70 @@ html.btv-on #btv-pod-toggle:hover {
     }
   }
 
-  // ---------- v4.1 Y：合集列表收起/展开（合集标题右侧） ----------
-  // 落点：.video-pod__header > .header-top > .left 的 div.amt（"（1/158）"）之后。
-  // 收起 = 给 .video-pod 打 btv-pod-collapsed（.video-pod__body display:none，
-  // 实测 pod 349→99px、推荐列表顶边 y=483→233），与原生 .pod-expand-btn 的
-  // max-height 切换互不干扰。默认展开，收起态记 localStorage；非合集视频没有
-  // .video-pod，自然不显示。Vue 重建后每 tick 自愈（按钮补插、class 补打）。
-  function ensurePodToggle() {
-    if (!enabled) return;
-    let pod = null;
-    try { pod = $('.rcmd-tab .video-pod'); } catch (e) { pod = null; }
-    if (!pod || !pod.isConnected) return;
-    let want = false;
-    try { want = localStorage.getItem(POD_KEY) === '1'; } catch (e) { want = false; }
-    pod.classList.toggle('btv-pod-collapsed', want);
-    let left = null;
-    try {
-      left = pod.querySelector('.video-pod__header .header-top .left')
-        || pod.querySelector('.header-top .left')
-        || pod.querySelector('.video-pod__header .left');
-    } catch (e) { left = null; }
-    if (!left) return;
-    let btn = null;
-    try { btn = pod.querySelector('#btv-pod-toggle'); } catch (e) { btn = null; }
-    if (btn && btn.isConnected && btn.parentElement === left) {
-      btn.textContent = want ? '展开' : '收起';
-      return;
-    }
-    try { if (btn) btn.remove(); } catch (e) { /* ignore */ }
-    let anchor = null;
-    try { anchor = left.querySelector('.amt') || left.querySelector('.title'); } catch (e) { anchor = null; }
-    btn = document.createElement('button');
-    btn.id = 'btv-pod-toggle';
-    btn.type = 'button';
-    btn.textContent = want ? '展开' : '收起';
-    btn.style.cssText = 'height:24px;line-height:24px;padding:0 10px;margin-left:8px;font-size:12px;' +
-      'font-family:inherit;color:var(--text3,#9499a0);background:var(--graph_bg_thin,#f1f2f3);' +
-      'border:none;border-radius:4px;cursor:pointer;white-space:nowrap;';
-    btn.addEventListener('click', function (ev) {
+  // ---------- v4.1 Y：合集/选集列表收起/展开（标题右侧） ----------
+  // v4.2.3：按钮从「插进 .video-pod__header」改为「视觉传送」——DOM 挂 body
+  // （我们地盘），fixed 定位摆到标题行「（1/4）」右侧的视觉位置。原来往 Vue
+  // 管理的 header 里 insertBefore，多P视频上选集列表异步 patch 时撞上我们的
+  // 节点，Vue 抛 HierarchyRequestError，选集/推荐封面、UP 头像全部渲染失败。
+  // 收起 = 给 .video-pod 打 btv-pod-collapsed（.video-pod__body display:none），
+  // 纯 class 与原生互不干扰。默认展开，收起态记 localStorage；非合集/多P视频
+  // 没有 .video-pod，按钮隐藏。Vue 重建后每 tick 自愈。
+  let podBtn = null;
+  function ensurePodBtn() {
+    if (podBtn && podBtn.isConnected) return podBtn;
+    podBtn = document.createElement('button');
+    podBtn.id = 'btv-pod-toggle';
+    podBtn.type = 'button';
+    podBtn.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation();
       const curPod = $('.rcmd-tab .video-pod');       // 现取现用，防闭包持有旧节点
       if (!curPod) return;
       const c = !curPod.classList.contains('btv-pod-collapsed');
       curPod.classList.toggle('btv-pod-collapsed', c);
       try { localStorage.setItem(POD_KEY, c ? '1' : '0'); } catch (e) { /* ignore */ }
-      btn.textContent = c ? '展开' : '收起';
+      podBtn.textContent = c ? '展开' : '收起';
+      positionPodBtn(curPod);                         // 收起后 header 位置可能变，立即复测
     });
-    try { left.insertBefore(btn, anchor ? anchor.nextSibling : null); } catch (e) { left.appendChild(btn); }
+    document.body.appendChild(podBtn);
+    return podBtn;
+  }
+  function positionPodBtn(pod) {
+    const btn = podBtn;
+    if (!btn || !pod) { if (btn) btn.style.display = 'none'; return; }
+    let left = null;
+    try {
+      left = pod.querySelector('.video-pod__header .header-top .left')
+        || pod.querySelector('.header-top .left')
+        || pod.querySelector('.video-pod__header .left');
+    } catch (e) { left = null; }
+    if (!left) { btn.style.display = 'none'; return; }
+    const lr = left.getBoundingClientRect();
+    // 「视频」tab 未激活时 .rcmd-tab 被收进屏外（left:-99999）→ 按钮一并隐藏
+    if (lr.width < 2 || lr.left < -1000 || lr.right > (window.innerWidth || 0) + 1000) {
+      btn.style.display = 'none';
+      return;
+    }
+    btn.style.display = '';
+    btn.style.left = r2(lr.right + 8) + 'px';
+    btn.style.top = r2(lr.top + Math.max(0, (lr.height - 24) / 2)) + 'px';
+  }
+  function ensurePodToggle() {
+    if (!enabled) { if (podBtn) podBtn.style.display = 'none'; return; }
+    let pod = null;
+    try { pod = $('.rcmd-tab .video-pod'); } catch (e) { pod = null; }
+    if (!pod || !pod.isConnected) { if (podBtn) podBtn.style.display = 'none'; return; }
+    let want = false;
+    try { want = localStorage.getItem(POD_KEY) === '1'; } catch (e) { want = false; }
+    pod.classList.toggle('btv-pod-collapsed', want);
+    const btn = ensurePodBtn();
+    btn.textContent = want ? '展开' : '收起';
+    positionPodBtn(pod);
   }
 
   // 停用时还原合集区：移除我们的按钮与收起标记（收起态 CSS 本就 gated 在
   // html.btv-on 上，这里清干净是为了原生视图零残留；重启用时按 localStorage 恢复）
   function resetPodUI() {
-    try { const b = $('#btv-pod-toggle'); if (b) b.remove(); } catch (e) { /* ignore */ }
+    try { if (podBtn) { podBtn.remove(); podBtn = null; } } catch (e) { /* ignore */ }
     $$('.video-pod.btv-pod-collapsed').forEach(p => p.classList.remove('btv-pod-collapsed'));
   }
 
@@ -2387,6 +2560,14 @@ html.btv-on #btv-pod-toggle:hover {
   // ---------- 主流程 ----------
   function main() {
     injectCSS();
+    diagArm();                                            // v4.2.4：?btvdiag=1 时才真正干活
+    // v4.2.4：记录首次起播时刻，界定"冷窗口"（播放器初始化/首帧缓冲不做昂贵改动）
+    document.addEventListener('playing', function (ev) {
+      if (ev.target && ev.target.tagName === 'VIDEO' && !firstPlayingAt) {
+        firstPlayingAt = Date.now();
+        diagPush('first-playing', 'since=' + (firstPlayingAt - pageAt) + 'ms');
+      }
+    }, true);
     window.addEventListener('resize', scheduleLayout);
     window.addEventListener('scroll', scheduleLayout, { passive: true });
     // v4.2 Z：Esc 关闭打赏浮层（浮层会反复创建/销毁，监听只挂一次）
@@ -2432,16 +2613,31 @@ html.btv-on #btv-pod-toggle:hover {
       if (location.href !== lastURL) {
         lastURL = location.href;
         dclAt = Date.now();
+        pageAt = Date.now();                          // v4.2.4：SPA 跳转 = 新的冷窗口
+        firstPlayingAt = 0;
+        diagPush('spa-nav', location.href);
         // SPA 跳转：等新页面启动后重挂
         setTimeout(() => { if (siteBooted()) layout(); else disable(); }, 3000);
       }
       if (!isVideoPage() || !isRightVisible()) { disable(); return; }
       // 元素类名被 Vue 重建后丢失 → 重新套用
+      // v4.2.4：layout() 末尾已含 ensurePodToggle()，不再重复调用（省掉一套测量）
       try { layout(); } catch (e) { /* ignore */ }
-      // v4.1 Y：合集收起/展开按钮（Vue 重建后自愈）
-      try { ensurePodToggle(); } catch (e) { /* ignore */ }
       // 评论组件可能在任意时刻重建 shadow DOM，这里低频复检（不与滚动/缩放绑在一起，避免开销）
       applyCommentTweaks();
+      // v4.2.4 诊断：检测播放器被销毁 / 播放进度回退（命中即导出报告）
+      if (DIAG) {
+        try {
+          const v = $('video');
+          // 注意：B 站自己会建两个 video 元素，那个没播过的被拆属正常，别误报
+          if (diagLastV && !diagLastV.isConnected && diagLastCt > 1) diagSave('video-detached ctBefore=' + diagLastCt);
+          else if (v) {
+            const ct = Math.round(v.currentTime * 10) / 10;
+            if (diagLastCt > 1 && ct + 1.5 < diagLastCt) diagSave('currentTime-regress ' + diagLastCt + '->' + ct);
+            diagLastV = v; diagLastCt = ct;
+          }
+        } catch (e) { /* ignore */ }
+      }
     }, 1000);
   }
 
