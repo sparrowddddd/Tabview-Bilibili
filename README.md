@@ -4,10 +4,10 @@
 效果如下：
 ![](./images/效果1.png)
 <p>
-  <img src="./images/效果2.png" witch="24%">
-  <img src="./images/效果3.png" witch="24%">
-  <img src="./images/效果4.png" witch="24%">
-  <img src="./images/效果5.png" witch="24%">
+  <img src="./images/效果2.png" width="24%">
+  <img src="./images/效果3.png" width="24%">
+  <img src="./images/效果4.png" width="24%">
+  <img src="./images/效果5.png" width="24%">
 </p>
 
 把 B 站视频页的**简介、评论、推荐视频**收进右侧标签页，无需下划页面，专注看视频。思路来自 Tabview YouTube 的 B 站版。
